@@ -1,18 +1,17 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 # -------------------------------------------------
 # PAGE CONFIG
 # -------------------------------------------------
 st.set_page_config(
-    page_title="Education Intelligence Platform",
+    page_title="Bursary Investment Analysis – Matric 2025",
     layout="wide"
 )
 
-st.title("🎓 Education Intelligence & Prediction Platform (2025)")
+st.title("🎓 Bursary Investment Decision Dashboard")
+st.caption("Purpose: Identify where bursary funding achieves the highest educational return")
 
 # -------------------------------------------------
 # LOAD DATA
@@ -22,193 +21,152 @@ def load_data():
     df = pd.read_excel("2025 SCHOOL PERFORMANCE REPORT.xlsx")
 
     df = df.rename(columns={
-        "Unnamed: 0": "School_Code",
         "Unnamed: 1": "School_Name",
         "Unnamed: 3": "Quintile",
         "Unnamed: 13": "Total_Wrote",
         "Unnamed: 14": "Total_Achieved",
-        "Unnamed: 15": "Percent_Achieved",
+        "Unnamed: 15": "Pass_Rate",
         "Unnamed: 16": "District",
         "Unnamed: 17": "Province"
     })
 
-    df["Percent_Achieved"] = pd.to_numeric(df["Percent_Achieved"], errors="coerce")
+    df["Pass_Rate"] = pd.to_numeric(df["Pass_Rate"], errors="coerce")
     df["Quintile"] = pd.to_numeric(df["Quintile"], errors="coerce")
-    df["Total_Wrote"] = pd.to_numeric(df["Total_Wrote"], errors="coerce")
-    df["Total_Achieved"] = pd.to_numeric(df["Total_Achieved"], errors="coerce")
+    df = df.dropna(subset=["School_Name", "Pass_Rate", "Province", "Quintile"])
 
-    df = df.dropna(subset=["School_Name", "Percent_Achieved", "Province"])
     return df
 
 df = load_data()
 
 # -------------------------------------------------
-# FEATURE ENGINEERING (CORE)
+# INVESTMENT GROUP LOGIC (CORE)
 # -------------------------------------------------
-def perf_band(x):
-    if x >= 90: return "Excellent"
-    if x >= 75: return "Good"
-    if x >= 50: return "Average"
-    return "Poor"
+def investment_group(row):
+    if row["Quintile"] <= 2 and row["Pass_Rate"] >= 80:
+        return "Group A: High Impact / Best ROI"
+    elif row["Quintile"] == 3 and row["Pass_Rate"] >= 75:
+        return "Group B: Stable / Scalable"
+    elif row["Pass_Rate"] >= 60:
+        return "Group C: High Potential / Needs Support"
+    else:
+        return "Group D: High Risk / Not Bursary Ready"
 
-df["Actual_Band"] = df["Percent_Achieved"].apply(perf_band)
-
-df["Expected_Band"] = df["Quintile"].apply(
-    lambda q: "Excellent" if q >= 4 else "Good" if q == 3 else "Average"
-)
-
-df["Efficiency_Score"] = df["Total_Achieved"] / df["Total_Wrote"]
-df["Efficiency_Score"] = df["Efficiency_Score"].fillna(0)
-
-df["Equity_Gap"] = df["Percent_Achieved"] - (df["Quintile"] * 15)
-
-df["Growth_Index"] = (
-    df["Percent_Achieved"] * 0.6 +
-    df["Efficiency_Score"] * 100 * 0.4
-)
-
-df["Stability_Index"] = np.clip(
-    df["Efficiency_Score"] * 100, 0, 100
-)
-
-# -------------------------------------------------
-# RISK & PREDICTION FEATURES
-# -------------------------------------------------
-def risk_label(p):
-    if p < 50: return "High Risk"
-    if p < 70: return "Medium Risk"
-    return "Low Risk"
-
-df["Risk_Category"] = df["Percent_Achieved"].apply(risk_label)
-
-df["Projected_Pass_Rate_2026"] = np.clip(
-    df["Percent_Achieved"] + (df["Growth_Index"] - 70) * 0.15,
-    30, 100
-)
-
-df["Intervention_Priority"] = (
-    (100 - df["Percent_Achieved"]) * 0.5 +
-    abs(df["Equity_Gap"]) * 0.3 +
-    (100 - df["Stability_Index"]) * 0.2
-)
+df["Investment_Group"] = df.apply(investment_group, axis=1)
 
 # -------------------------------------------------
 # SIDEBAR FILTERS
 # -------------------------------------------------
-st.sidebar.header("🔍 Filters")
+st.sidebar.header("🔎 Filters")
 
-province = st.sidebar.multiselect(
-    "Province",
+province_filter = st.sidebar.multiselect(
+    "Select Province(s)",
     sorted(df["Province"].unique()),
     default=sorted(df["Province"].unique())
 )
 
-filtered = df[df["Province"].isin(province)]
+filtered = df[df["Province"].isin(province_filter)]
 
 # -------------------------------------------------
-# KPI SECTION
+# EXECUTIVE KPIs
 # -------------------------------------------------
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4 = st.columns(4)
 
-c1.metric("Schools", len(filtered))
-c2.metric("Avg Pass %", f"{filtered['Percent_Achieved'].mean():.1f}%")
-c3.metric("100% Schools", (filtered["Percent_Achieved"] == 100).sum())
-c4.metric("High Risk", (filtered["Risk_Category"] == "High Risk").sum())
-c5.metric("Priority Interventions", (filtered["Intervention_Priority"] > 50).sum())
-
-# -------------------------------------------------
-# HEATMAP MATRIX
-# -------------------------------------------------
-st.subheader("🧩 Province vs Performance Matrix")
-
-heat = pd.crosstab(
-    filtered["Province"],
-    filtered["Actual_Band"],
-    normalize="index"
-) * 100
-
-fig, ax = plt.subplots(figsize=(10, 5))
-sns.heatmap(heat, annot=True, fmt=".1f", cmap="Blues", ax=ax)
-st.pyplot(fig)
+c1.metric("Schools Analysed", len(filtered))
+c2.metric("Average Pass Rate", f"{filtered['Pass_Rate'].mean():.1f}%")
+c3.metric("Best ROI Schools (Group A)", (filtered["Investment_Group"] == "Group A: High Impact / Best ROI").sum())
+c4.metric("High Risk Schools", (filtered["Investment_Group"] == "Group D: High Risk / Not Bursary Ready").sum())
 
 # -------------------------------------------------
-# CONFUSION / EXPECTATION MATRIX
+# INVESTMENT GROUP OVERVIEW
 # -------------------------------------------------
-st.subheader("🎯 Expected vs Actual Performance")
+st.subheader("📊 Investment Group Breakdown")
 
-conf = pd.crosstab(
-    filtered["Expected_Band"],
-    filtered["Actual_Band"]
-)
+group_counts = filtered["Investment_Group"].value_counts()
 
-fig2, ax2 = plt.subplots(figsize=(6, 5))
-sns.heatmap(conf, annot=True, fmt="d", cmap="Oranges", ax=ax2)
-st.pyplot(fig2)
+fig1, ax1 = plt.subplots()
+group_counts.plot(kind="bar", ax=ax1)
+ax1.set_ylabel("Number of Schools")
+ax1.set_title("School Distribution by Investment Category")
+plt.xticks(rotation=30, ha="right")
+
+st.pyplot(fig1)
 
 # -------------------------------------------------
-# PREDICTION VIEW
+# WHY GROUP A MATTERS (BOARD VIEW)
 # -------------------------------------------------
-st.subheader("🔮 Projected Pass Rates (2026)")
+st.subheader("🟢 Group A – Highest Return on Bursary Investment")
 
-top_projection = filtered.sort_values(
-    "Projected_Pass_Rate_2026", ascending=False
-).head(20)
+group_a = filtered[filtered["Investment_Group"] == "Group A: High Impact / Best ROI"] \
+    .sort_values("Pass_Rate", ascending=False)
+
+st.write("""
+**These schools deliver strong academic outcomes despite low socio-economic conditions.**  
+Funding learners here maximises:
+- Graduation probability
+- Equity impact
+- Cost efficiency
+""")
 
 st.dataframe(
-    top_projection[[
-        "School_Name", "Province",
-        "Percent_Achieved",
-        "Projected_Pass_Rate_2026",
-        "Risk_Category"
-    ]]
+    group_a[[
+        "School_Name", "Province", "District",
+        "Quintile", "Pass_Rate"
+    ]],
+    use_container_width=True
 )
 
 # -------------------------------------------------
-# INTERVENTION DASHBOARD
+# PROVINCE INVESTMENT PROFILE
 # -------------------------------------------------
-st.subheader("🚨 Priority Intervention Schools")
+st.subheader("🗺️ Provincial Investment Profile")
 
-interventions = filtered.sort_values(
-    "Intervention_Priority", ascending=False
-).head(20)
+province_summary = filtered.groupby("Province").agg(
+    Avg_Pass_Rate=("Pass_Rate", "mean"),
+    Best_ROI_Schools=("Investment_Group", lambda x: (x == "Group A: High Impact / Best ROI").sum()),
+    High_Risk_Schools=("Investment_Group", lambda x: (x == "Group D: High Risk / Not Bursary Ready").sum())
+).reset_index()
+
+st.dataframe(province_summary, use_container_width=True)
+
+# -------------------------------------------------
+# RISK WARNING SECTION
+# -------------------------------------------------
+st.subheader("🔴 High-Risk Funding Environments")
+
+st.write("""
+Schools below **60% pass rate** present a **high dropout risk**.  
+Bursaries alone are unlikely to succeed without additional academic interventions.
+""")
+
+group_d = filtered[filtered["Investment_Group"] == "Group D: High Risk / Not Bursary Ready"]
 
 st.dataframe(
-    interventions[[
-        "School_Name", "Province", "Quintile",
-        "Percent_Achieved",
-        "Risk_Category",
-        "Intervention_Priority"
-    ]]
+    group_d[[
+        "School_Name", "Province", "District",
+        "Quintile", "Pass_Rate"
+    ]],
+    use_container_width=True
 )
 
 # -------------------------------------------------
-# SCHOOL COMPARISON
+# DOWNLOAD FOR FUNDERS
 # -------------------------------------------------
-st.subheader("🏫 School Comparison")
-
-schools = st.multiselect(
-    "Select schools",
-    filtered["School_Name"].unique()
-)
-
-if schools:
-    st.dataframe(
-        filtered[filtered["School_Name"].isin(schools)][[
-            "School_Name", "Province", "Quintile",
-            "Percent_Achieved", "Projected_Pass_Rate_2026",
-            "Risk_Category", "Growth_Index"
-        ]]
-    )
-
-# -------------------------------------------------
-# DOWNLOAD
-# -------------------------------------------------
-st.subheader("⬇️ Export Data")
+st.subheader("⬇️ Export Investment-Ready Data")
 
 csv = filtered.to_csv(index=False).encode("utf-8")
+
 st.download_button(
-    "Download Full Analytics Dataset",
+    "Download Full Investment Dataset",
     csv,
-    "education_intelligence_2025.csv",
+    "bursary_investment_analysis_2025.csv",
     "text/csv"
+)
+
+# -------------------------------------------------
+# FOOTER MESSAGE (IMPORTANT)
+# -------------------------------------------------
+st.markdown("---")
+st.caption(
+    "This analysis supports **evidence-based bursary allocation**, balancing impact, risk, and equity. "
+    "It is designed for funding committees and CSR investment boards."
 )
